@@ -85,7 +85,7 @@ def nova_chat(req: ChatRequest):
         
     # 2. Configure the AI
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    model = genai.GenerativeModel('gemini-3.1-flash')
     
     try:
         # 3. Ask the AI the user's question
