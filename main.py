@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from datetime import datetime
+from typing import Optional
 
 app = FastAPI()
 
@@ -105,7 +106,7 @@ def get_single_chat(chat_id: int):
     return {"status": "error", "messages": []}
 
 class ChatRequest(BaseModel):
-    chat_id: int = None
+    chat_id: Optional[int] = None  # <--- UPDATE THIS LINE
     prompt: str
     
 @app.post("/api/nova/chat")
