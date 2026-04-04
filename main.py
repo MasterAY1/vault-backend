@@ -5,7 +5,6 @@ import google.generativeai as genai
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from datetime import datetime
 from typing import Optional
 
 app = FastAPI()
@@ -24,24 +23,20 @@ app.add_middleware(
 def init_db():
     conn = sqlite3.connect("vault.db")
     cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS portfolio (
-            id INTEGER PRIMARY KEY,
-            buying_power REAL
-        )
-    """)
-    # Nova AI History Table - NOW WITH A JSON MESSAGES COLUMN!
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS nova_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT,
-            messages TEXT DEFAULT '[]',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
+    cursor.execute("CREATE TABLE IF NOT EXISTS portfolio (id INTEGER PRIMARY KEY, buying_power REAL)")
+    cursor.execute("CREATE TABLE IF NOT EXISTS nova_history (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, messages TEXT DEFAULT '[]', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+    
+    # NEW: Settings Table for Global Consciousness
+    cursor.execute("CREATE TABLE IF NOT EXISTS nova_settings (id INTEGER PRIMARY KEY, global_memory TEXT)")
+    
     cursor.execute("SELECT COUNT(*) FROM portfolio")
     if cursor.fetchone()[0] == 0:
         cursor.execute("INSERT INTO portfolio (buying_power) VALUES (25000.00)")
+        
+    cursor.execute("SELECT COUNT(*) FROM nova_settings")
+    if cursor.fetchone()[0] == 0:
+        cursor.execute("INSERT INTO nova_settings (global_memory) VALUES ('')")
+        
     conn.commit()
     conn.close()
 
@@ -80,9 +75,32 @@ def execute_trade(trade: TradeRequest):
     conn.close()
     return {"status": "success", "new_buying_power": new_bp}
 
+# ==========================================
+# ✨ NOVA SETTINGS STATION (NEW!)
+# ==========================================
+class SettingsRequest(BaseModel):
+    global_memory: str
+
+@app.get("/api/nova/settings")
+def get_settings():
+    conn = sqlite3.connect("vault.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT global_memory FROM nova_settings LIMIT 1")
+    row = cursor.fetchone()
+    conn.close()
+    return {"status": "success", "global_memory": row[0] if row else ""}
+
+@app.post("/api/nova/settings")
+def update_settings(req: SettingsRequest):
+    conn = sqlite3.connect("vault.db")
+    cursor = conn.cursor()
+    cursor.execute("UPDATE nova_settings SET global_memory = ?", (req.global_memory,))
+    conn.commit()
+    conn.close()
+    return {"status": "success"}
 
 # ==========================================
-# ✨ NOVA AI STATION WITH MEMORY
+# ✨ NOVA AI STATION
 # ==========================================
 @app.get("/api/nova/history")
 def get_nova_history():
@@ -101,26 +119,32 @@ def get_single_chat(chat_id: int):
     cursor.execute("SELECT messages FROM nova_history WHERE id = ?", (chat_id,))
     row = cursor.fetchone()
     conn.close()
-    if row and row[0]:
-        return {"status": "success", "messages": json.loads(row[0])}
+    if row and row[0]: return {"status": "success", "messages": json.loads(row[0])}
     return {"status": "error", "messages": []}
 
 class ChatRequest(BaseModel):
-    chat_id: Optional[int] = None  # <--- UPDATE THIS LINE
+    chat_id: Optional[int] = None
     prompt: str
     
 @app.post("/api/nova/chat")
 def nova_chat(req: ChatRequest):
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key: return {"error": "API Key is missing."}
-        
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-2.5-flash')
     
     conn = sqlite3.connect("vault.db")
     cursor = conn.cursor()
     
-    # 1. Load History or Create New Chat
+    # FETCH CUSTOM INSTRUCTIONS FROM DATABASE
+    cursor.execute("SELECT global_memory FROM nova_settings LIMIT 1")
+    setting_row = cursor.fetchone()
+    system_instruction = setting_row[0] if setting_row and setting_row[0] else "You are Nova, a helpful AI assistant."
+        
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel(
+        model_name='gemini-2.5-flash',
+        system_instruction=system_instruction
+    )
+    
     db_messages = []
     if req.chat_id:
         cursor.execute("SELECT messages FROM nova_history WHERE id = ?", (req.chat_id,))
@@ -131,18 +155,12 @@ def nova_chat(req: ChatRequest):
         cursor.execute("INSERT INTO nova_history (title, messages) VALUES (?, ?)", (title, "[]"))
         req.chat_id = cursor.lastrowid
 
-    # 2. Format history for Google's API
-    gemini_history = []
-    for msg in db_messages:
-        role = "user" if msg["role"] == "user" else "model"
-        gemini_history.append({"role": role, "parts": [msg["content"]]})
+    gemini_history = [{"role": "user" if m["role"] == "user" else "model", "parts": [m["content"]]} for m in db_messages]
 
     try:
-        # 3. Talk to AI with FULL Memory Context
         chat_session = model.start_chat(history=gemini_history)
         response = chat_session.send_message(req.prompt)
         
-        # 4. Save new memory to Database
         db_messages.append({"id": len(db_messages)+1, "role": "user", "content": req.prompt})
         db_messages.append({"id": len(db_messages)+2, "role": "ai", "content": response.text})
         
