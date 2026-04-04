@@ -1,10 +1,13 @@
 import sqlite3
+import requests
+import os
+import google.generativeai as genai
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 app = FastAPI()
 
-# --- CORS SETUP ---
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -13,74 +16,47 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- DATABASE SETUP (The Pantry) ---
+# ==========================================
+# 🏦 VAULT FINTECH STATION
+# ==========================================
 def init_db():
-    # 1. Connect to a database (this creates 'vault.db' if it doesn't exist)
     conn = sqlite3.connect("vault.db")
     cursor = conn.cursor()
-    
-    # 2. Create a table for our portfolio
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS portfolio (
             id INTEGER PRIMARY KEY,
-            buying_power REAL,
-            active_trades INTEGER,
-            status TEXT
+            buying_power REAL
         )
     """)
-    
-    # 3. If the table is empty, insert our starting data
     cursor.execute("SELECT COUNT(*) FROM portfolio")
     if cursor.fetchone()[0] == 0:
-        cursor.execute("INSERT INTO portfolio (buying_power, active_trades, status) VALUES (25000.00, 4, 'Market Open')")
+        cursor.execute("INSERT INTO portfolio (buying_power) VALUES (25000.00)")
         conn.commit()
-        
     conn.close()
 
-# Run the setup function as soon as the file loads
 init_db()
-
-
-# --- API ROUTES ---
-@app.get("/")
-def health_check():
-    return {"status": "success", "message": "Vault API is running perfectly."}
 
 @app.get("/api/portfolio")
 def get_portfolio():
-    # 1. Open the pantry
     conn = sqlite3.connect("vault.db")
-    conn.row_factory = sqlite3.Row # This makes the data format nicely into JSON
+    conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
-    
-    # 2. Grab the data from the database
-    cursor.execute("SELECT * FROM portfolio LIMIT 1")
+    cursor.execute("SELECT buying_power FROM portfolio LIMIT 1")
     data = cursor.fetchone()
-    
-    # 3. Close the pantry
     conn.close()
-    
-    # 4. Send it to React
     return dict(data)
 
-from pydantic import BaseModel
-
-# 1. Define what an "Order" looks like so Python knows what to expect
 class TradeRequest(BaseModel):
     amount: float
-    action: str  # "Buy" or "Sell"
+    action: str
 
-# 2. Create the POST route to process the trade
 @app.post("/api/trade")
 def execute_trade(trade: TradeRequest):
     conn = sqlite3.connect("vault.db")
     cursor = conn.cursor()
-    
-    # Grab the current buying power from the database
     cursor.execute("SELECT buying_power FROM portfolio LIMIT 1")
     current_bp = cursor.fetchone()[0]
     
-    # Calculate the new balance
     if trade.action == "Buy":
         if trade.amount > current_bp:
             return {"status": "error", "message": "Insufficient funds"}
@@ -88,10 +64,32 @@ def execute_trade(trade: TradeRequest):
     else:
         new_bp = current_bp + trade.amount
         
-    # UPDATE the database permanently
     cursor.execute("UPDATE portfolio SET buying_power = ?", (new_bp,))
     conn.commit()
     conn.close()
-    
-    # Send the new permanent balance back to React
     return {"status": "success", "new_buying_power": new_bp}
+
+
+# ==========================================
+# ✨ NOVA AI STATION (NEW!)
+# ==========================================
+class ChatRequest(BaseModel):
+    prompt: str
+    
+@app.post("/api/nova/chat")
+def nova_chat(req: ChatRequest):
+    # 1. Grab the secret key from the cloud environment
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        return {"error": "API Key is missing from the server."}
+        
+    # 2. Configure the AI
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel('gemini-1.5-flash')
+    
+    try:
+        # 3. Ask the AI the user's question
+        response = model.generate_content(req.prompt)
+        return {"status": "success", "reply": response.text}
+    except Exception as e:
+        return {"status": "error", "reply": str(e)}
