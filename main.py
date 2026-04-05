@@ -1,6 +1,7 @@
 import sqlite3
 import os
 import json
+import requests
 import google.generativeai as genai
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -97,16 +98,44 @@ class CheckoutRequest(BaseModel):
 
 @app.post("/api/store/checkout")
 def create_checkout(req: CheckoutRequest):
-    # This is where the Stripe logic will go!
-    # For now, we simulate a successful handshake.
+    paystack_secret = os.environ.get("PAYSTACK_SECRET_KEY")
+    if not paystack_secret:
+        return {"status": "error", "message": "Backend configuration error: Missing API Key."}
+
+    # 1. Calculate Total
     total = sum(item.price * item.qty for item in req.items)
-    print(f"Processing checkout for total: ${total}")
     
-    # We'll return a fake URL for now to test the React redirect logic
-    return {
-        "status": "success", 
-        "checkout_url": "https://checkout.stripe.com/pay/pst_test_example" 
+    # Paystack requires the amount in the lowest denomination (Kobo for NGN)
+    amount_in_kobo = int(total * 100)
+    
+    # 2. Build the Paystack API Request
+    headers = {
+        "Authorization": f"Bearer {paystack_secret}",
+        "Content-Type": "application/json"
     }
+    
+    payload = {
+        "email": "architect@masteray.com", # Hardcoded for now, later we can add a user email input!
+        "amount": amount_in_kobo,
+        "currency": "NGN",
+        # Send them back to your portfolio after paying
+        "callback_url": "https://master-ay-archive.vercel.app/" 
+    }
+    
+    try:
+        # 3. Handshake with Paystack
+        response = requests.post("https://api.paystack.co/transaction/initialize", json=payload, headers=headers)
+        paystack_data = response.json()
+        
+        if paystack_data.get("status"):
+            # Paystack gives us a secure URL. We send it back to React to redirect the user.
+            auth_url = paystack_data["data"]["authorization_url"]
+            return {"status": "success", "checkout_url": auth_url}
+        else:
+            return {"status": "error", "message": paystack_data.get("message")}
+            
+    except Exception as e:
+        return {"status": "error", "message": "Failed to connect to payment gateway."}
 
 # ... (Keep your Nova Chat logic at the bottom) ...
 
