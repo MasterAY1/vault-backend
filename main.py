@@ -5,7 +5,7 @@ import google.generativeai as genai
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 
 app = FastAPI()
 
@@ -23,16 +23,46 @@ app.add_middleware(
 def init_db():
     conn = sqlite3.connect("vault.db")
     cursor = conn.cursor()
-    cursor.execute("CREATE TABLE IF NOT EXISTS portfolio (id INTEGER PRIMARY KEY, buying_power REAL)")
-    cursor.execute("CREATE TABLE IF NOT EXISTS nova_history (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, messages TEXT DEFAULT '[]', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
     
-    # NEW: Settings Table for Global Consciousness
+    # 1. Fintech Table
+    cursor.execute("CREATE TABLE IF NOT EXISTS portfolio (id INTEGER PRIMARY KEY, buying_power REAL)")
+    
+    # 2. Nova AI Tables
+    cursor.execute("CREATE TABLE IF NOT EXISTS nova_history (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, messages TEXT DEFAULT '[]', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
     cursor.execute("CREATE TABLE IF NOT EXISTS nova_settings (id INTEGER PRIMARY KEY, global_memory TEXT)")
     
+    # 3. ✨ NEW: E-Commerce Products Table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS store_products (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT,
+            category TEXT,
+            price REAL,
+            rating REAL,
+            image TEXT,
+            description TEXT
+        )
+    """)
+    
+    # Check if we need to seed the initial inventory
+    cursor.execute("SELECT COUNT(*) FROM store_products")
+    if cursor.fetchone()[0] == 0:
+        initial_products = [
+            ("Oak Accent Chair", "Furniture", 349, 4.8, "https://images.unsplash.com/photo-1567538096630-e0c55bd6374c?q=80&w=800", "Crafted from solid sustainable oak, this chair features a minimalist silhouette."),
+            ("Minimalist Ceramic Vase", "Decor", 85, 4.9, "https://images.unsplash.com/photo-1612152605347-f93296cb657d?q=80&w=800", "Hand-thrown by local artisans, this unglazed ceramic vase offers a beautiful matte texture."),
+            ("Walnut Dining Table", "Furniture", 1299, 5.0, "https://images.unsplash.com/photo-1533090481720-856c6e3c1fdc?q=80&w=800", "A centerpiece for gathering. Constructed from premium American Walnut."),
+            ("Linen Lounge Sofa", "Furniture", 2100, 4.7, "https://images.unsplash.com/photo-1493663284031-b7e3aefcae8e?q=80&w=800", "Deep, plush seating upholstered in breathable, stain-resistant Belgian linen."),
+            ("Brass Pendant Light", "Lighting", 220, 4.6, "https://images.unsplash.com/photo-1507473885765-e6ed057f7821?q=80&w=800", "A spun-brass dome pendant that casts a warm, directed glow."),
+            ("Woven Floor Rug", "Decor", 450, 4.8, "https://images.unsplash.com/photo-1554995207-c18c203602cb?q=80&w=800", "Hand-loomed using pure New Zealand wool."),
+            ("Matte Black Floor Lamp", "Lighting", 310, 4.9, "https://images.unsplash.com/photo-1513506003901-1e6a229e2d15?q=80&w=800", "Sleek and highly functional with a heavy marble base."),
+            ("Travertine Coffee Table", "Furniture", 890, 5.0, "https://images.unsplash.com/photo-1600607688969-a5bfcd64bd28?q=80&w=800", "A monolithic design carved from solid Italian travertine stone.")
+        ]
+        cursor.executemany("INSERT INTO store_products (name, category, price, rating, image, description) VALUES (?, ?, ?, ?, ?, ?)", initial_products)
+
+    # Re-initialize other defaults
     cursor.execute("SELECT COUNT(*) FROM portfolio")
     if cursor.fetchone()[0] == 0:
         cursor.execute("INSERT INTO portfolio (buying_power) VALUES (25000.00)")
-        
     cursor.execute("SELECT COUNT(*) FROM nova_settings")
     if cursor.fetchone()[0] == 0:
         cursor.execute("INSERT INTO nova_settings (global_memory) VALUES ('')")
@@ -41,6 +71,44 @@ def init_db():
     conn.close()
 
 init_db()
+
+# ==========================================
+# 🛒 LUMINA STORE STATION (NEW!)
+# ==========================================
+
+@app.get("/api/store/inventory")
+def get_inventory():
+    conn = sqlite3.connect("vault.db")
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM store_products")
+    products = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return {"status": "success", "products": products}
+
+class CartItem(BaseModel):
+    id: int
+    name: str
+    price: float
+    qty: int
+
+class CheckoutRequest(BaseModel):
+    items: List[CartItem]
+
+@app.post("/api/store/checkout")
+def create_checkout(req: CheckoutRequest):
+    # This is where the Stripe logic will go!
+    # For now, we simulate a successful handshake.
+    total = sum(item.price * item.qty for item in req.items)
+    print(f"Processing checkout for total: ${total}")
+    
+    # We'll return a fake URL for now to test the React redirect logic
+    return {
+        "status": "success", 
+        "checkout_url": "https://checkout.stripe.com/pay/pst_test_example" 
+    }
+
+# ... (Keep your Nova Chat logic at the bottom) ...
 
 # ==========================================
 # 🏦 VAULT FINTECH STATION (Unchanged)
